@@ -1,0 +1,7 @@
+authors = ["Daan Huybrechs <daan.huybrechs@cs.kuleuven.be>"]
+name = "ModifiedArrays"
+uuid = "fdc69f36-d433-11e8-1891-f9cf53ea6496"
+version = "0.1.0"
+
+[deps]
+LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
