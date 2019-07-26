@@ -1,160 +1,198 @@
 module ModifiedArrays
 
-using Base: tail
+import Base: first, tail
+using Base: @propagate_inbounds
 
 export
-# Types
-# Functions
     modify,
+    ModifiedArray,
+    # transpose.jl
     modified_transpose,
     modified_adjoint,
-    ModifiedOffsetArray
+    TransposeMod,
+    AdjointMod
 
 ## Main types
 
 "The supertype of all array modifiers."
-abstract type Modifier end
-
-"Modifier that by default does not participate in any modification."
-abstract type NonintrusiveModifier <: Modifier end
-"Modifier that by default participates in every modification."
-abstract type IntrusiveModifier <: Modifier end
+abstract type ArrayModifier end
 
 "The special case of no modification at all."
-struct NoModifier <: Modifier end
+struct NoModifier <: ArrayModifier end
 
 
 
-abstract type Modifiable end
 
-specialize(::Modifiable, mod::NoModifier) = NoModifier()
-specialize(::Modifiable, mod::NonintrusiveModifier) = NoModifier()
-specialize(::Modifiable, mod::IntrusiveModifier) = mod
+"The main modified array type consists of a parent array and a modifier."
+struct ModifiedArray{T,N,AA,M} <: AbstractArray{T,N}
+    parent      ::  AA      # the array-like object being modified
+    modifier    ::  M       # the modifier
+end
 
+ModifiedArray(A, mod::ArrayModifier) = ModifiedArray{mod_eltype(mod,A),mod_ndims(mod,A)}(A, mod)
+ModifiedArray{T,N}(A, mod::ArrayModifier) where {T,N} =
+    ModifiedArray{T,N,typeof(A),typeof(mod)}(A, mod)
 
-
-struct Interface{S} <: Modifiable end
-
-# For any interface:
-# - we skip NoModifier
-recmod(IF::Interface, ::NoModifier, mods, args...) =
-    recmod(IF, mods, args...)
-# - given a tuple of modifiers we invoke recursion and specialize on the interface
-recmod(IF::Interface, mods::Tuple, args...) =
-    recmod(IF, specialize(IF, mods[1]), tail(mods), args...)
-
-
-
-abstract type ModifiedArray{T,N} <: AbstractArray{T,N} end
+modify(A, mod::ArrayModifier) = ModifiedArray(A, mod)
 
 Base.parent(a::ModifiedArray) = a.parent
 modifier(a::ModifiedArray) = a.modifier
 
-struct TypedModifiedArray{AA,M,T,N} <: ModifiedArray{T,N}
-    parent      ::  AA      # the array-like object being modified
-    modifier    ::  M       # tuple of modifiers
-end
-
-struct UntypedModifiedArray{T,N} <: ModifiedArray{T,N}
-    parent
-    modifier
-end
 
 
 
 ## Array specific interface
-#
-# The methods we enable modifications for are:
-#   size, getindex, setindex!, IndexStyle, axes, similar
-#
-# In addition, we provide `eltype` and `dimension` function, to compute the
-# type parameters of the abstract array we inherit from at creation time,
-# since ModifiedArray <: AbstractArray{T,N}
 
+abstract type Modifiable end
+
+struct Interface{S} <: Modifiable end
+
+
+# The two type variables
 const IF_eltype = Interface{:eltype}
-const IF_dimension = Interface{:dimension}
+const IF_ndims = Interface{:ndims}
 
-struct ElementTypeModifier{T} <: Modifier end
-struct DimensionModifier{N} <: Modifier end
-
-recmod(::IF_eltype, ::Tuple{}, A) = eltype(A)
-recmod(::IF_eltype, ::ElementTypeModifier{T}, mods, A) where {T} = T
-
-# This routine returns dimension as a type parameter to Val
-recmod(::IF_dimension, ::Tuple{}, A::AbstractArray{T,N}) where {T,N} = Val{N}()
-recmod(::IF_dimension, ::DimensionModifier{N}, mods, A) where {N} = Val{N}()
-
-
+# Compulsory interface methods
 const IF_size = Interface{:size}
 const IF_getindex = Interface{:getindex}
-const IF_setindex = Interface{:setindex}
-const IF_IndexStyle = Interface{:setindex}
-const IF_axes = Interface{:axes}
+const IF_setindex! = Interface{:setindex!}
+
+# Optional methods
+const IF_IndexStyle = Interface{:IndexStyle}
 const IF_similar = Interface{:similar}
-
-sizemodifier(mod) = specialize(IF_size(), mod)
-getindexmodifier(mod) = specialize(IF_getindex(), mod)
-setindexmodifier(mod) = specialize(IF_setindex(), mod)
-IndexStylemodifier(mod) = specialize(IF_IndexStyle(), mod)
-axesmodifier(mod) = specialize(IF_axes(), mod)
-similarmodifier(mod) = specialize(IF_similar(), mod)
+const IF_axes = Interface{:axes}
 
 
+abstract type ModStyle end
+struct ModRecursive <: ModStyle end
+struct ModFinal <: ModStyle end
+struct ModNothing <: ModStyle end
 
-Base.size(A::ModifiedArray) = recmod(IF_size(), modifier(A), parent(A))
-recmod(::IF_size, ::Tuple{}, A) = size(A)
 
-Base.getindex(A::ModifiedArray, i::Int) =
-    recmod(IF_getindex(), modifier(A), parent(A), i)
+## eltype
+mod_eltype(A::ModifiedArray) = mod_eltype(modifier(A), parent(A))
+mod_eltype(mod::ArrayModifier, A) = mod_eltype(ModStyle(mod, IF_eltype()), mod, A)
+
+mod_eltype(::ModNothing, mod, A) = eltype(A)
+mod_eltype(::ModFinal, mod, A) = mod_eltype_final(mod)
+mod_eltype(::ModRecursive, mod, A) = mod_eltype_post(mod, eltype(A))
+
+
+## ndims
+mod_ndims(A::ModifiedArray) = mod_ndims(modifier(A), parent(A))
+mod_ndims(mod::ArrayModifier, A) = mod_ndims(ModStyle(mod, IF_ndims()), mod, A)
+
+mod_ndims(::ModNothing, mod, A) = ndims(A)
+mod_ndims(::ModFinal, mod, A) = mod_ndims_final(mod)
+mod_ndims(::ModRecursive, mod, A) = mod_ndims_post(mod, ndims(A))
+
+
+## size
+Base.size(A::ModifiedArray) = mod_size(A)
+mod_size(A::ModifiedArray) = mod_size(modifier(A), parent(A))
+mod_size(mod::ArrayModifier, A) = mod_size(ModStyle(mod, IF_size()), mod, A)
+
+mod_size(::ModNothing, mod, A) = size(A)
+mod_size(::ModFinal, mod, A) = mod_size_final(mod)
+mod_size(::ModRecursive, mod, A) = mod_size_post(mod, size(A))
+
+
+## axes
+Base.axes(A::ModifiedArray) = mod_axes(A)
+mod_axes(A::ModifiedArray) = mod_axes(modifier(A), parent(A))
+mod_axes(mod::ArrayModifier, A) = mod_axes(ModStyle(mod, IF_axes()), mod, A)
+
+mod_axes(::ModNothing, mod, A) = axes(A)
+mod_axes(::ModFinal, mod, A) = mod_axes_final(mod)
+mod_axes(::ModRecursive, mod, A) = mod_axes_post(mod, axes(A))
+
+
+## IndexStyle
+Base.IndexStyle(Mod::Type{<:ModifiedArray}) = mod_IndexStyle(Mod)
+mod_IndexStyle(::Type{ModifiedArray{T,N,AA,M}}) where {T,N,AA,M} =
+    mod_IndexStyle(M, AA)
+mod_IndexStyle(M::Type{<:ArrayModifier}, AA) = mod_IndexStyle(ModStyle(M, IF_IndexStyle()), M, AA)
+
+mod_IndexStyle(::ModNothing, M, AA) = IndexStyle(AA)
+mod_IndexStyle(::ModFinal, M, AA) = mod_IndexStyle_final(M)
+mod_IndexStyle(::ModRecursive, M, AA) = mod_IndexStyle_post(M, IndexStyle(AA))
+
+
+## getindex
+
+# We only intercept calls with a linear index, or with a number of indices equal
+# to the dimension of the array.
+Base.getindex(A::ModifiedArray{T,1}, i::Int) where {T} = mod_getindex(A, i)
 Base.getindex(A::ModifiedArray{T,N}, I::Vararg{Int,N}) where {T,N} =
-    recmod(IF_getindex(), modifier(A), parent(A), I...)
-recmod(::IF_getindex, ::Tuple{}, A, I...) = getindex(A, I...)
+    mod_getindex(A, I...)
+# Linear indexing of arrays that are not vectors:
+Base.getindex(A::ModifiedArray{T,N}, i::Int) where {T,N} =
+    __getindex(IndexStyle(A), A, i)
+# - the array supports linear indexing: invoke mod_getindex
+__getindex(::IndexLinear, A, i) = mod_getindex(A, i)
+# - the array supports cartesian indexing: translate the index to cartesian
+__getindex(::IndexCartesian, A, i) = mod_getindex(A, Base._to_subscript_indices(A, i)...)
 
-Base.setindex!(A::ModifiedArray, val, i::Int) =
-    (recmod(IF_setindex(), modifier(A), parent(A), val, i); A)
+mod_getindex(A::ModifiedArray, I...) =
+    mod_getindex(modifier(A), parent(A), I...)
+mod_getindex(mod::ArrayModifier, A, I...) =
+    mod_getindex(ModStyle(mod, IF_getindex()), mod, A, I...)
+
+mod_getindex(::ModNothing, mod, A, I...) = getindex(A, I...)
+mod_getindex(::ModFinal, mod, istyle, A, I...) = mod_getindex_final(mod, I...)
+mod_getindex(::ModRecursive, mod, A, I...) =
+    mod_getindex_post(mod, getindex(A, mod_getindex_pre(mod, I...)...), I...)
+
+
+## setindex!
+# Like with getindex above, we only intercept a few calls to setindex!.
+Base.setindex!(A::ModifiedArray{T,1}, val, i::Int) where {T} =
+    mod_setindex!(A, val, i)
 Base.setindex!(A::ModifiedArray{T,N}, val, I::Vararg{Int,N}) where {T,N} =
-    (recmod(IF_setindex(), modifier(A), parent(A), val, I...); A)
-recmod(::IF_setindex, ::Tuple{}, A, val, I...) = setindex!(A, val, I...)
-
-Base.IndexStyle(A::ModifiedArray) =
-    recmod(IF_IndexStyle(), modifier(A), parent(A))
-recmod(::IF_IndexStyle, ::Tuple{}, A) = IndexStyle(A)
-
-Base.axes(A::ModifiedArray) = recmod(IF_axes(), modifier(A), parent(A))
-recmod(::IF_axes, ::Tuple{}, A) = axes(A)
+    mod_setindex!(A, val, I...)
+# Linear indexing of arrays that are not vectors, similar to getindex above:
+Base.setindex!(A::ModifiedArray{T,N}, val, i::Int) where {T,N} =
+    __setindex!(IndexStyle(A), A, val, i)
+__setindex!(::IndexLinear, A, val, i) = mod_setindex!(A, val, i)
+__setindex!(::IndexCartesian, A, val, i) =
+    mod_setindex!(A, val, Base._to_subscript_indices(A, i)...)
 
 
-function Base.similar(A::ModifiedArray, ::Type{T}, dims::Dims) where {T}
-    B = similar(parent(A), T, dims)
-end
+# The return value of setindex! is not prescribed by the array interface.
+# In most cases, the mutated object is returned, so we just return A.
+# That means there is no need for a mod_setindex!_post function.
+# See also Julia issue #31891
+mod_setindex!(A::ModifiedArray, val, I...) =
+    (mod_setindex!(modifier(A), parent(A), val, I...); A)
+mod_setindex!(mod::ArrayModifier, A, val, I...) =
+    mod_setindex!(ModStyle(mod, IF_setindex!()), mod, A, val, I...)
+
+mod_setindex!(::ModNothing, mod, A, val, I...) = setindex!(A, val, I...)
+mod_setindex!(::ModFinal, mod, A, val, I...) =
+    mod_setindex!_final(mod, val, I...)
+mod_setindex!(::ModRecursive, mod, A, val, I...) =
+    setindex!(A, mod_setindex!_pre(mod, val, I...)...)
 
 
-## More convenient constructors
+## similar
+Base.similar(A::ModifiedArray, ::Type{T}, dims::Dims) where {T} =
+    mod_similar(A, T, dims)
+mod_similar(A::ModifiedArray, ::Type{T}, dims::Dims) where {T} =
+    mod_similar(modifier(A), parent(A), T, dims)
+mod_similar(mod::ArrayModifier, A, T, dims) =
+    mod_similar(ModStyle(mod, IF_similar()), mod, A, T, dims)
 
-TypedModifiedArray(A, mods) = TypedModifiedArray(
-    recmod(IF_eltype(), mods, A),
-    recmod(IF_dimension(), mods, A),
-    A, mods)
+mod_similar(::ModNothing, mod, A, T, dims) = similar(A, T, dims)
+mod_similar(::ModFinal, mod, A, T, dims) = mod_similar_final(mod, T, dims)
+mod_similar(::ModRecursive, mod, A, T, dims) =
+    mod_similar_post(mod, similar(A, mod_similar_pre(mod, T, dims)...), T, dims)
 
-TypedModifiedArray(::Type{T}, ::Val{N}, A, mods) where {T,N} =
-    TypedModifiedArray{typeof(A),typeof(mods),T,N}(A,mods)
-
-
-modify(A, mod::Modifier) = modify(A, (mod,))
-modify(A, mods::Modifier...) = modify(A, mods)
-modify(A::ModifiedArray, mod::Modifier) =
-    modify(parent(A), (mod, modifier(A)...))
-modify(A::ModifiedArray, mods::Modifier...) =
-    modify(parent(A), (mods..., modifier(A)...))
-
-modify(A, mods::Tuple{Vararg{Modifier}}) = TypedModifiedArray(A, mods)
+# Since similar is an optional function, we can safely introduce a ModNothing default.
+ModStyle(::ArrayModifier, ::IF_similar) = ModNothing()
 
 
-
-
+include("composite.jl")
 include("transpose.jl")
-include("indexing.jl")
-include("view.jl")
-include("property.jl")
+include("offset.jl")
 
 end # module

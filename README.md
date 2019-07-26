@@ -16,4 +16,4 @@ The key differences include:
 
 Modifiers that are included in the package reproduce the functionality of the array types `Adjoint`, `Transpose` and `OffsetArray`. The implementation passes the complete test suite of these types (with minor modifications related mostly to syntax).
 
-This package is not optimized for performance. It is unlikely for the `OffsetArray` in this package to be faster than the original [`OffsetArrays`](https://github.com/JuliaArrays/OffsetArrays.jl). On the other hand, it is likely for this package to result in faster code for the transpose of a view of an `OffsetArray`.
+This package is not optimized for performance. It is unlikely for the `OffsetArray` in this package to be faster than the original [`OffsetArrays`](https://github.com/JuliaArrays/OffsetArrays.jl). On the other hand, it seems likely for this package to eventually result in faster code for the transpose of a view of an `OffsetArray`.

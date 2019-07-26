@@ -5,114 +5,198 @@ function check_dimension(::Val{N}) where {N}
     return nothing
 end
 
-struct TransposeModifier{T,N} <: IntrusiveModifier
-    function TransposeModifier{T,N}() where {T,N}
+struct TransposeMod{T,N} <: ArrayModifier
+    function TransposeMod{T,N}() where {T,N}
         check_dimension(Val{N}())
         new()
     end
 end
 
-struct AdjointModifier{T,N} <: IntrusiveModifier
-    function AdjointModifier{T,N}() where {T,N}
+struct AdjointMod{T,N} <: ArrayModifier
+    function AdjointMod{T,N}() where {T,N}
         check_dimension(Val{N}())
         new()
     end
 end
 
-const TransposeModifiers{T,N} = Union{AdjointModifier{T,N},TransposeModifier{T,N}}
+const TransposeMod1{T} = TransposeMod{T,1}
+const TransposeMod2{T} = TransposeMod{T,2}
+const AdjointMod1{T} = AdjointMod{T,1}
+const AdjointMod2{T} = AdjointMod{T,2}
 
-# # Adjoint behaves like transpose regarding size, axes and index style
-# specialize(::IF_size, ::AdjointModifier{T,N}) where {T,N} = TransposeModifier{T,N}()
-# specialize(::IF_axes, ::AdjointModifier{T,N}) where {T,N} = TransposeModifier{T,N}()
-# specialize(::IF_IndexStyle, ::AdjointModifier{T,N}) where {T,N} = TransposeModifier{T,N}()
+const AdjOrTransModifier{T,N} = Union{AdjointMod{T,N},TransposeMod{T,N}}
+const AdjOrTransModifier1{T} = AdjOrTransModifier{T,1}
+const AdjOrTransModifier2{T} = AdjOrTransModifier{T,2}
+
+const TransposeModifiedMatrix{T,AA} = ModifiedArray{T,2,AA,TransposeMod{T,2}}
+const TransposeModifiedVector{T,AA} = ModifiedArray{T,2,AA,TransposeMod{T,1}}
+const AdjointModifiedMatrix{T,AA} = ModifiedArray{T,2,AA,AdjointMod{T,2}}
+const AdjointModifiedVector{T,AA} = ModifiedArray{T,2,AA,AdjointMod{T,1}}
+
+const AdjOrTransModifiedVector{T,AA} = Union{TransposeModifiedVector{T,AA},AdjointModifiedVector{T,AA}}
+const AdjOrTransModifiedMatrix{T,AA} = Union{TransposeModifiedMatrix{T,AA},AdjointModifiedMatrix{T,AA}}
+
+# Logic to compute the type of the transpose and adjoint modifiers:
+# we make sure to use the same element type as the transpose and adjoint
+# methods applied to A.
+transpose_modifier(A::AbstractVector) =
+    TransposeMod{Base.promote_op(modified_transpose,eltype(A)),1}()
+transpose_modifier(A::AbstractMatrix) =
+    TransposeMod{Base.promote_op(modified_transpose,eltype(A)),2}()
+adjoint_modifier(A::AbstractVector) =
+    AdjointMod{Base.promote_op(modified_adjoint,eltype(A)),1}()
+adjoint_modifier(A::AbstractMatrix) =
+    AdjointMod{Base.promote_op(modified_adjoint,eltype(A)),2}()
+
+modified_transpose(A::AbstractVector) = modify(A, transpose_modifier(A))
+modified_transpose(A::AbstractMatrix) = modify(A, transpose_modifier(A))
+
+modified_transpose(A::TransposeModifiedVector) = parent(A)
+modified_transpose(A::TransposeModifiedMatrix) = parent(A)
+
+modified_adjoint(A::AbstractVector) = modify(A, adjoint_modifier(A))
+modified_adjoint(A::AbstractMatrix) = modify(A, adjoint_modifier(A))
+
+modified_adjoint(A::AdjointModifiedVector) = parent(A)
+modified_adjoint(A::AdjointModifiedMatrix) = parent(A)
+
+modified_transpose(A::Number) = A
+modified_adjoint(A::Number) = conj(A)
 
 
-specialize(::IF_eltype, ::TransposeModifiers{T,N}) where {T,N} = ElementTypeModifier{T}()
-
-# dimension goes from 1 to 2 when the transpose of a vector is taken
-specialize(::IF_dimension, ::TransposeModifiers{T,1}) where {T} = DimensionModifier{2}()
-specialize(::IF_dimension, ::TransposeModifiers{T,2}) where {T} = NoModifier()
-
-modified_transpose(a::AbstractVector) = modify(a, TransposeModifier{Base.promote_op(transpose,eltype(a)),1}())
-modified_transpose(a::AbstractMatrix) = modify(a, TransposeModifier{Base.promote_op(transpose,eltype(a)),2}())
-modified_adjoint(a::AbstractVector) = modify(a, AdjointModifier{Base.promote_op(adjoint,eltype(a)),1}())
-modified_adjoint(a::AbstractMatrix) = modify(a, AdjointModifier{Base.promote_op(adjoint,eltype(a)),2}())
+Base.vec(A::TransposeModifiedVector) = parent(A)
+Base.vec(A::AdjointModifiedVector) = parent(A)
 
 
+###
+# The interface
+###
 
-const TransposeModifier1{T} = TransposeModifier{T,1}
-const TransposeModifier2{T} = TransposeModifier{T,2}
-const AdjointModifier1{T} = AdjointModifier{T,1}
-const AdjointModifier2{T} = AdjointModifier{T,2}
+## eltype
+ModStyle(::AdjOrTransModifier, ::IF_eltype) = ModFinal()
+mod_eltype_final(::AdjOrTransModifier{T,N}) where {T,N} = T
 
+## ndims
+ModStyle(::AdjOrTransModifier{T,2}, ::IF_ndims) where {T} = ModNothing()
+ModStyle(::AdjOrTransModifier{T,1}, ::IF_ndims) where {T} = ModFinal()
+mod_ndims_final(::AdjOrTransModifier{T,1}) where {T} = 2
 
 ## size
-# - The size of a transposed vector of length L becomes (1,L)
-recmod(IF::IF_size, ::TransposeModifiers{T,1}, mods, A) where {T} =
-    (1, recmod(IF, mods, A)[1])
-# - The size of a matrix is simple reversed
-recmod(IF::IF_size, ::TransposeModifiers{T,2}, mods, A) where {T} =
-    reverse(recmod(IF, mods, A))
-
+ModStyle(::AdjOrTransModifier, ::IF_size) = ModRecursive()
+mod_size_post(mod::AdjOrTransModifier1, size) = (1, size...)
+mod_size_post(mod::AdjOrTransModifier2, size) = reverse(size)
 
 ## getindex
+ModStyle(::AdjOrTransModifier, ::IF_getindex) = ModRecursive()
 
-# Note that we have to take the transpose/adjoint of the element itself, since
-# transpose/adjoint are recursive in Julia v1. We use Julia's transpose
-# (which may and up using the Transpose and Adjoint types of Base if the
-# element type is a vector)
+# First, indexing in the 1D case
+# - with a linear index
+mod_getindex_pre(mod::AdjOrTransModifier1, i) = (i,)
 
-# - For matrices we only have to reverse the order of the indices
-recmod(IF::IF_getindex, ::TransposeModifier2, mods, A, i, j) =
-    transpose(recmod(IF, mods, A, j, i))
-recmod(IF::IF_getindex, ::AdjointModifier2, mods, A, i, j) =
-    adjoint(recmod(IF, mods, A, j, i))
-
-# Vectors are more difficult.
-# - If the transpose/adjoint of a vector is indexed with two indices, it must
-#   be the case that the first index is 1. We hook into Julia's native
-#   boundschecking system to enforce this.
-#   We avoid calling checkbounds(A, I), since A can be modified by mods.
-#   Instead, we call the downstream function `checkbounds_indices` and pass it
-#   the correct modified axes. This means we have to throw the error ourselves.
-function recmod(IF::IF_getindex, mod::TransposeModifiers{T,1}, mods, A, I::Vararg{Int,2}) where {T}
-    @boundscheck Base.checkbounds_indices(Bool, recmod(IF_axes(), axesmodifier(mod), mods, A), I) || throw(BoundsError())
-    recmod(IF, mod, mods, A, I[2])
-end
-# - if a single index is passed, we simply pass it through
-recmod(IF::IF_getindex, ::TransposeModifier1, mods, A, i) =
-    transpose(recmod(IF, mods, A, i))
-recmod(IF::IF_getindex, ::AdjointModifier1, mods, A, i) =
-    adjoint(recmod(IF, mods, A, i))
-
-
-## setindex
-
-# Same comments as for getindex apply.
-# - indexing vectors with two indices
-function recmod(IF::IF_setindex, mod::TransposeModifiers{T,1}, mods, A, val, I::Vararg{Int,2}) where {T}
-    @boundscheck Base.checkbounds_indices(Bool, recmod(IF_axes(), specialize(IF_axes, mod), mods, A), I) || throw(BoundsError())
-    recmod(IF, mod, mods, A, val, I[2])
+# - or with two indices. In this case, we check that the first index is 1
+checkone(i) = i==1 || throw(BoundsError())
+function mod_getindex_pre(mod::AdjOrTransModifier1, i, j)
+    @boundscheck checkone(i)
+    (j,)
 end
 
-# - indexing with a single index
-recmod(IF::IF_setindex, ::TransposeModifier1, mods, A, val, i) =
-    recmod(IF, mods, A, transpose(val), i)
-recmod(IF::IF_setindex, ::AdjointModifier1, mods, A, val, i) =
-    recmod(IF, mods, A, adjoint(val), i)
+mod_getindex_post(mod::TransposeMod1, Z, args...) = modified_transpose(Z)
+mod_getindex_post(mod::AdjointMod1, Z, args...) = modified_adjoint(Z)
 
-# - matrix case
-recmod(IF::IF_setindex, ::TransposeModifier2, mods, A, val, i, j) =
-    recmod(IF, mods, A, transpose(val), j, i)
-recmod(IF::IF_setindex, ::AdjointModifier2, mods, A, val, i, j) =
-    recmod(IF, mods, A, adjoint(val), j, i)
+
+# - indexing in the 2D case
+mod_getindex_pre(mod::AdjOrTransModifier2, i, j) = (j, i)
+
+mod_getindex_post(mod::TransposeMod2, Z, i, j) = modified_transpose(Z)
+mod_getindex_post(mod::AdjointMod2, Z, i, j) = modified_adjoint(Z)
+
+## setindex!
+ModStyle(::AdjOrTransModifier, ::IF_setindex!) = ModRecursive()
+
+# Like above, first the 1D case with one or two indices
+mod_setindex!_pre(mod::TransposeMod1, val, i) = (modified_transpose(val), i)
+mod_setindex!_pre(mod::AdjointMod1, val, i) = (modified_adjoint(val), i)
+
+function mod_setindex!_pre(mod::TransposeMod1, val, i, j)
+    @boundscheck checkone(i)
+    modified_transpose(val), j
+end
+function mod_setindex!_pre(mod::AdjointMod1, val, i, j)
+    @boundscheck checkone(i)
+    modified_adjoint(val), j
+end
+
+# Then the 2d case
+mod_setindex!_pre(mod::TransposeMod2, val, i, j) = (modified_transpose(val), j, i)
+mod_setindex!_pre(mod::AdjointMod2, val, i, j) = (modified_adjoint(val), j, i)
+
 
 ## IndexStyle
-recmod(IF::IF_IndexStyle, ::TransposeModifiers{T,1}, mods, A) where {T} = IndexLinear()
-recmod(IF::IF_IndexStyle, ::TransposeModifiers{T,2}, mods, A) where {T} = IndexCartesian()
+ModStyle(::Type{<:AdjOrTransModifier}, ::IF_IndexStyle) = ModFinal()
+
+mod_IndexStyle_final(::Type{<:AdjOrTransModifier1}) = IndexLinear()
+mod_IndexStyle_final(::Type{<:AdjOrTransModifier2}) = IndexCartesian()
+
 
 ## axes
-recmod(IF::IF_axes, mod::TransposeModifiers{T,1}, mods, A) where {T} =
-    (Base.OneTo(1), recmod(IF, mods, A)...)
-recmod(IF::IF_axes, mod::TransposeModifiers{T,2}, mods, A) where {T} =
-    reverse(recmod(IF, mods, A))
+ModStyle(::AdjOrTransModifier, ::IF_axes) = ModRecursive()
+
+mod_axes_post(mod::AdjOrTransModifier1, axes) = (Base.OneTo(1), axes...)
+mod_axes_post(mod::AdjOrTransModifier2, axes) = reverse(axes)
+
+
+# ## similar
+# ModStyle(::AdjOrTransModifier, ::IF_similar) = ModRecursive()
+#
+# mod_similar_pre(::AdjOrTransModifier, T, dims) = (T, dims)
+# mod_similar_post(::AdjointMod, Z, T, dims) = modified_adjoint(Z)
+# mod_similar_post(::TransposeMod, Z, T, dims) = modified_transpose(Z)
+
+
+### The following code is adapted from adjtrans.jl in Julia stdlib
+
+## multiplication
+
+import Base: *, \, /
+using LinearAlgebra: dot
+import LinearAlgebra: pinv
+
+*(u::AdjointModifiedVector, v::AbstractVector) = dot(u.parent, v)
+*(u::TransposeModifiedVector{T}, v::AbstractVector{T}) where {T<:Real} = dot(u.parent, v)
+function *(u::TransposeModifiedVector, v::AbstractVector)
+    # require_one_based_indexing(u, v)
+    @boundscheck length(u) == length(v) || throw(DimensionMismatch())
+    return sum(@inbounds(u[k]*v[k]) for k in 1:length(u))
+end
+# vector * Adjoint/Transpose-vector
+*(u::AbstractVector, v::AdjOrTransModifiedVector) = broadcast(*, u, v)
+# Adjoint/Transpose-vector * Adjoint/Transpose-vector
+# (necessary for disambiguation with fallback methods in linalg/matmul)
+*(u::AdjointModifiedVector, v::AdjointModifiedVector) = throw(MethodError(*, (u, v)))
+*(u::TransposeModifiedVector, v::TransposeModifiedVector) = throw(MethodError(*, (u, v)))
+
+# AdjOrTransModifiedVector{<:Any,<:AdjOrTransModifiedVector} is a lazy conj vectors
+# We need to expand the combinations to avoid ambiguities
+(*)(u::TransposeModifiedVector, v::AdjointModifiedVector{<:Any,<:TransposeModifiedVector}) =
+    sum(uu*vv for (uu, vv) in zip(u, v))
+(*)(u::AdjointModifiedVector,   v::AdjointModifiedVector{<:Any,<:TransposeModifiedVector}) =
+    sum(uu*vv for (uu, vv) in zip(u, v))
+(*)(u::TransposeModifiedVector, v::TransposeModifiedVector{<:Any,<:AdjointModifiedVector}) =
+    sum(uu*vv for (uu, vv) in zip(u, v))
+(*)(u::AdjointModifiedVector,   v::TransposeModifiedVector{<:Any,<:AdjointModifiedVector}) =
+    sum(uu*vv for (uu, vv) in zip(u, v))
+
+## pseudoinversion
+pinv(v::AdjointModifiedVector, tol::Real = 0) = pinv(v.parent, tol).parent
+pinv(v::TransposeModifiedVector, tol::Real = 0) = pinv(conj(v.parent)).parent
+
+## left-division \
+\(u::AdjOrTransModifiedVector, v::AdjOrTransModifiedVector) = pinv(u) * v
+
+
+## right-division /
+### Lines below disabled due to ambiguities
+# /(u::AdjointModifiedVector, A::AbstractMatrix) = modified_adjoint(modified_adjoint(A) \ u.parent)
+# /(u::TransposeModifiedVector, A::AbstractMatrix) = modified_transpose(modified_transpose(A) \ u.parent)
+/(u::AdjointModifiedVector, A::TransposeModifiedMatrix) = modified_adjoint(conj(A.parent) \ u.parent) # technically should be adjoint(copy(adjoint(copy(A))) \ u.parent)
+/(u::TransposeModifiedVector, A::AdjointModifiedMatrix) = modified_transpose(conj(A.parent) \ u.parent) # technically should be transpose(copy(transpose(copy(A))) \ u.parent)
