@@ -143,6 +143,8 @@ mod_getindex(::ModFinal, mod, istyle, A, I...) = mod_getindex_final(mod, I...)
 mod_getindex(::ModRecursive, mod, A, I...) =
     mod_getindex_post(mod, getindex(A, mod_getindex_pre(mod, I...)...), I...)
 
+# default definition
+mod_getindex_pre(mod::ArrayModifier, I...) = I
 
 ## setindex!
 # Like with getindex above, we only intercept a few calls to setindex!.
@@ -173,6 +175,9 @@ mod_setindex!(::ModFinal, mod, A, val, I...) =
 mod_setindex!(::ModRecursive, mod, A, val, I...) =
     setindex!(A, mod_setindex!_pre(mod, val, I...)...)
 
+# default definition
+mod_setindex!_pre(mod::ArrayModifier, val, I...) = (val, I...)
+
 
 ## similar
 Base.similar(A::ModifiedArray, ::Type{T}, dims::Dims) where {T} =
@@ -194,5 +199,6 @@ ModStyle(::ArrayModifier, ::IF_similar) = ModNothing()
 include("composite.jl")
 include("transpose.jl")
 include("offset.jl")
+include("eltype.jl")
 
 end # module
