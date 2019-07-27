@@ -31,11 +31,11 @@ ModStyle(::OffsetMod, ::IF_getindex) = ModRecursive()
 ModStyle(::OffsetMod, ::IF_setindex!) = ModRecursive()
 ModStyle(::Type{<:OffsetMod}, ::IF_IndexStyle) = ModNothing()
 ModStyle(::OffsetMod, ::IF_axes) = ModRecursive()
+ModStyle(::OffsetMod, ::IF_similar) = ModNothing()
 
 
 mod_getindex_pre(mod::OffsetMod{N}, I::Vararg{Int,N}) where {N} = offset(mod.offsets, I)
-mod_getindex_pre(mod::OffsetMod, i::Int) = i
-mod_getindex_post(mod::OffsetMod, Z, args...) = Z
+mod_getindex_pre(mod::OffsetMod, i::Int) = (i,)
 
 mod_setindex!_pre(mod::OffsetMod{N}, val, I::Vararg{Int,N}) where {N} = (val,offset(mod.offsets, I)...)
 mod_setindex!_pre(mod::OffsetMod, val, i::Int) = (val, i)
@@ -161,18 +161,18 @@ Base.getindex(a::OffsetRange, r::OffsetRange) = ModifiedOffsetArray(a[parent(r)]
 Base.getindex(a::OffsetRange, r::AbstractRange) = a.parent[r .- a.modifier.offsets[1]]
 Base.getindex(a::AbstractRange, r::OffsetRange) = ModifiedOffsetArray(a[parent(r)], r.modifier.offsets)
 
-@inline @propagate_inbounds Base.getindex(r::UnitRange, s::IIUR) =
+Base.getindex(r::UnitRange, s::IIUR) =
     ModifiedOffsetArray(r[s.indices], s)
 
-@inline @propagate_inbounds Base.getindex(r::StepRange, s::IIUR) =
+Base.getindex(r::StepRange, s::IIUR) =
     ModifiedOffsetArray(r[s.indices], s)
 
-@inline @propagate_inbounds Base.getindex(r::StepRangeLen{T,<:Base.TwicePrecision,<:Base.TwicePrecision}, s::IIUR) where T =
+Base.getindex(r::StepRangeLen{T,<:Base.TwicePrecision,<:Base.TwicePrecision}, s::IIUR) where T =
     ModifiedOffsetArray(r[s.indices], s)
-@inline @propagate_inbounds Base.getindex(r::StepRangeLen{T}, s::IIUR) where {T} =
+Base.getindex(r::StepRangeLen{T}, s::IIUR) where {T} =
     ModifiedOffsetArray(r[s.indices], s)
 
-@inline @propagate_inbounds Base.getindex(r::LinRange, s::IIUR) =
+Base.getindex(r::LinRange, s::IIUR) =
     ModifiedOffsetArray(r[s.indices], s)
 
 function Base.show(io::IO, r::OffsetRange)

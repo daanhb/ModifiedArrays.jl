@@ -10,7 +10,6 @@ struct EltypeMod{T} <: ArrayModifier
 end
 
 ModStyle(::EltypeMod, ::Interface) = ModNothing()
-ModStyle(::EltypeMod, ::IF_similar) = ModNothing()
 ModStyle(::Type{<:EltypeMod}, ::IF_IndexStyle) = ModNothing()
 
 ModStyle(::EltypeMod, ::IF_eltype) = ModFinal()

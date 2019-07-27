@@ -77,6 +77,9 @@ mod_eltype(::ModNothing, mod, A) = eltype(A)
 mod_eltype(::ModFinal, mod, A) = mod_eltype_final(mod)
 mod_eltype(::ModRecursive, mod, A) = mod_eltype_post(mod, eltype(A))
 
+# default definition
+mod_eltype_post(mod::ArrayModifier, Z) = Z
+
 
 ## ndims
 mod_ndims(A::ModifiedArray) = mod_ndims(modifier(A), parent(A))
@@ -86,6 +89,8 @@ mod_ndims(::ModNothing, mod, A) = ndims(A)
 mod_ndims(::ModFinal, mod, A) = mod_ndims_final(mod)
 mod_ndims(::ModRecursive, mod, A) = mod_ndims_post(mod, ndims(A))
 
+# default definition
+mod_ndims_post(mod::ArrayModifier, Z) = Z
 
 ## size
 Base.size(A::ModifiedArray) = mod_size(A)
@@ -96,6 +101,9 @@ mod_size(::ModNothing, mod, A) = size(A)
 mod_size(::ModFinal, mod, A) = mod_size_final(mod)
 mod_size(::ModRecursive, mod, A) = mod_size_post(mod, size(A))
 
+# default definition
+mod_size_post(mod::ArrayModifier, Z) = Z
+
 
 ## axes
 Base.axes(A::ModifiedArray) = mod_axes(A)
@@ -105,6 +113,9 @@ mod_axes(mod::ArrayModifier, A) = mod_axes(ModStyle(mod, IF_axes()), mod, A)
 mod_axes(::ModNothing, mod, A) = axes(A)
 mod_axes(::ModFinal, mod, A) = mod_axes_final(mod)
 mod_axes(::ModRecursive, mod, A) = mod_axes_post(mod, axes(A))
+
+# default definition
+mod_axes_post(mod::ArrayModifier, Z) = Z
 
 
 ## IndexStyle
@@ -117,62 +128,73 @@ mod_IndexStyle(::ModNothing, M, AA) = IndexStyle(AA)
 mod_IndexStyle(::ModFinal, M, AA) = mod_IndexStyle_final(M)
 mod_IndexStyle(::ModRecursive, M, AA) = mod_IndexStyle_post(M, IndexStyle(AA))
 
+# default definition
+mod_IndexStyle_post(::Type{<:ArrayModifier}, Z) = Z
 
 ## getindex
 
 # We only intercept calls with a linear index, or with a number of indices equal
 # to the dimension of the array.
-Base.getindex(A::ModifiedArray{T,1}, i::Int) where {T} = mod_getindex(A, i)
-Base.getindex(A::ModifiedArray{T,N}, I::Vararg{Int,N}) where {T,N} =
+@propagate_inbounds Base.getindex(A::ModifiedArray{T,1}, i::Int) where {T} = mod_getindex(A, i)
+@propagate_inbounds Base.getindex(A::ModifiedArray{T,N}, I::Vararg{Int,N}) where {T,N} =
     mod_getindex(A, I...)
 # Linear indexing of arrays that are not vectors:
-Base.getindex(A::ModifiedArray{T,N}, i::Int) where {T,N} =
+@propagate_inbounds Base.getindex(A::ModifiedArray{T,N}, i::Int) where {T,N} =
     __getindex(IndexStyle(A), A, i)
 # - the array supports linear indexing: invoke mod_getindex
-__getindex(::IndexLinear, A, i) = mod_getindex(A, i)
+@propagate_inbounds __getindex(::IndexLinear, A, i) = mod_getindex(A, i)
 # - the array supports cartesian indexing: translate the index to cartesian
-__getindex(::IndexCartesian, A, i) = mod_getindex(A, Base._to_subscript_indices(A, i)...)
+@propagate_inbounds __getindex(::IndexCartesian, A, i) = mod_getindex(A, Base._to_subscript_indices(A, i)...)
 
-mod_getindex(A::ModifiedArray, I...) =
+@propagate_inbounds function mod_getindex(A::ModifiedArray, I...)
+    @boundscheck checkbounds(A, I...)
     mod_getindex(modifier(A), parent(A), I...)
-mod_getindex(mod::ArrayModifier, A, I...) =
+end
+@propagate_inbounds function mod_getindex(mod::ArrayModifier, A, I...)
     mod_getindex(ModStyle(mod, IF_getindex()), mod, A, I...)
+end
 
-mod_getindex(::ModNothing, mod, A, I...) = getindex(A, I...)
-mod_getindex(::ModFinal, mod, istyle, A, I...) = mod_getindex_final(mod, I...)
-mod_getindex(::ModRecursive, mod, A, I...) =
-    mod_getindex_post(mod, getindex(A, mod_getindex_pre(mod, I...)...), I...)
+@propagate_inbounds mod_getindex(::ModNothing, mod, A, I...) = getindex(A, I...)
+@propagate_inbounds mod_getindex(::ModFinal, mod, istyle, A, I...) = mod_getindex_final(mod, I...)
 
-# default definition
+@propagate_inbounds function mod_getindex(::ModRecursive, mod, A, I...)
+    mod_getindex_post(mod, A[mod_getindex_pre(mod, I...)...], I...)
+end
+
+# default definitions
 mod_getindex_pre(mod::ArrayModifier, I...) = I
+mod_getindex_post(mod::ArrayModifier, Z, I...) = Z
 
 ## setindex!
 # Like with getindex above, we only intercept a few calls to setindex!.
-Base.setindex!(A::ModifiedArray{T,1}, val, i::Int) where {T} =
+@propagate_inbounds Base.setindex!(A::ModifiedArray{T,1}, val, i::Int) where {T} =
     mod_setindex!(A, val, i)
-Base.setindex!(A::ModifiedArray{T,N}, val, I::Vararg{Int,N}) where {T,N} =
+@propagate_inbounds Base.setindex!(A::ModifiedArray{T,N}, val, I::Vararg{Int,N}) where {T,N} =
     mod_setindex!(A, val, I...)
 # Linear indexing of arrays that are not vectors, similar to getindex above:
-Base.setindex!(A::ModifiedArray{T,N}, val, i::Int) where {T,N} =
+@propagate_inbounds Base.setindex!(A::ModifiedArray{T,N}, val, i::Int) where {T,N} =
     __setindex!(IndexStyle(A), A, val, i)
-__setindex!(::IndexLinear, A, val, i) = mod_setindex!(A, val, i)
-__setindex!(::IndexCartesian, A, val, i) =
+@propagate_inbounds __setindex!(::IndexLinear, A, val, i) = mod_setindex!(A, val, i)
+@propagate_inbounds __setindex!(::IndexCartesian, A, val, i) =
     mod_setindex!(A, val, Base._to_subscript_indices(A, i)...)
 
 
-# The return value of setindex! is not prescribed by the array interface.
-# In most cases, the mutated object is returned, so we just return A.
-# That means there is no need for a mod_setindex!_post function.
-# See also Julia issue #31891
-mod_setindex!(A::ModifiedArray, val, I...) =
-    (mod_setindex!(modifier(A), parent(A), val, I...); A)
-mod_setindex!(mod::ArrayModifier, A, val, I...) =
+@propagate_inbounds function mod_setindex!(A::ModifiedArray, val, I...)
+    @boundscheck checkbounds(A, I...)
+    mod_setindex!(modifier(A), parent(A), val, I...)
+    # The return value of setindex! is not prescribed by the array interface.
+    # In most cases, the mutated object is returned, so we just return A.
+    # That means there is no need for a mod_setindex!_post function.
+    # See also Julia issue #31891
+    A
+end
+@propagate_inbounds mod_setindex!(mod::ArrayModifier, A, val, I...) =
     mod_setindex!(ModStyle(mod, IF_setindex!()), mod, A, val, I...)
 
-mod_setindex!(::ModNothing, mod, A, val, I...) = setindex!(A, val, I...)
-mod_setindex!(::ModFinal, mod, A, val, I...) =
+@propagate_inbounds mod_setindex!(::ModNothing, mod, A, val, I...) = setindex!(A, val, I...)
+@propagate_inbounds mod_setindex!(::ModFinal, mod, A, val, I...) =
     mod_setindex!_final(mod, val, I...)
-mod_setindex!(::ModRecursive, mod, A, val, I...) =
+@propagate_inbounds mod_setindex!(::ModRecursive, mod, A, val, I...) =
     setindex!(A, mod_setindex!_pre(mod, val, I...)...)
 
 # default definition
@@ -192,13 +214,15 @@ mod_similar(::ModFinal, mod, A, T, dims) = mod_similar_final(mod, T, dims)
 mod_similar(::ModRecursive, mod, A, T, dims) =
     mod_similar_post(mod, similar(A, mod_similar_pre(mod, T, dims)...), T, dims)
 
-# Since similar is an optional function, we can safely introduce a ModNothing default.
-ModStyle(::ArrayModifier, ::IF_similar) = ModNothing()
+# default definition
+mod_similar_pre(mod::ArrayModifier, T, dims) = (T, dims)
+mod_similar_post(mod::ArrayModifier, Z, T, dims) = Z
 
 
 include("composite.jl")
 include("transpose.jl")
 include("offset.jl")
 include("eltype.jl")
+include("mapped.jl")
 
 end # module

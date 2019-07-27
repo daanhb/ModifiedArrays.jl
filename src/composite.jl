@@ -35,8 +35,6 @@ modify(A::ModifiedArray, mods::ArrayModifier...) =
 struct CompositeStyle <: ModStyle end
 
 ModStyle(::CompositeMod, ::Interface) = CompositeStyle()
-# to avoid an ambiguity
-ModStyle(::CompositeMod, ::IF_similar) = CompositeStyle()
 
 mod_eltype(::CompositeStyle, mod::CompositeMod, A) =
     mod_eltype_composite(first(mod), tail(mod), A)
@@ -84,37 +82,37 @@ function mod_size_composite(::ModRecursive, mod, mods, A)
     mod_size_post(mod, Z)
 end
 
-mod_getindex(::CompositeStyle, mod::CompositeMod, A, I...) =
+@propagate_inbounds mod_getindex(::CompositeStyle, mod::CompositeMod, A, I...) =
     mod_getindex_composite(first(mod), tail(mod), A, I...)
-mod_getindex_composite(mod::ArrayModifier, mods::EmptyCompositeMod, A, I...) =
+@propagate_inbounds mod_getindex_composite(mod::ArrayModifier, mods::EmptyCompositeMod, A, I...) =
     mod_getindex(mod, A, I...)
-mod_getindex_composite(mod::ArrayModifier, mods::CompositeMod, A, I...) =
+@propagate_inbounds mod_getindex_composite(mod::ArrayModifier, mods::CompositeMod, A, I...) =
     mod_getindex_composite(ModStyle(mod, IF_getindex()), mod, mods, A, I...)
 
-mod_getindex_composite(::ModNothing, mod, mods, A, I...) =
+@propagate_inbounds mod_getindex_composite(::ModNothing, mod, mods, A, I...) =
     mod_getindex_composite(first(mods), tail(mods), A, I...)
-mod_getindex_composite(::ModFinal, mod, mods, A, I...) =
+@propagate_inbounds mod_getindex_composite(::ModFinal, mod, mods, A, I...) =
     mod_getindex_final(mod, I...)
-function mod_getindex_composite(::ModRecursive, mod, mods, A, I...)
+@propagate_inbounds function mod_getindex_composite(::ModRecursive, mod, mods, A, I...)
     J = mod_getindex_pre(mod, I...)
     Z = mod_getindex_composite(first(mods), tail(mods), A, J...)
-    mod_getindex_post(mod, Z, I...)
+    @inbounds mod_getindex_post(mod, Z, I...)
 end
 
-mod_setindex!(::CompositeStyle, mod::CompositeMod, A, val, I...) =
+@propagate_inbounds mod_setindex!(::CompositeStyle, mod::CompositeMod, A, val, I...) =
     mod_setindex!_composite(first(mod), tail(mod), A, val, I...)
-mod_setindex!_composite(mod::ArrayModifier, mods::EmptyCompositeMod, A, val, I...) =
+@propagate_inbounds mod_setindex!_composite(mod::ArrayModifier, mods::EmptyCompositeMod, A, val, I...) =
     mod_setindex!(mod, A, val, I...)
-mod_setindex!_composite(mod::ArrayModifier, mods::CompositeMod, A, val, I...) =
+@propagate_inbounds mod_setindex!_composite(mod::ArrayModifier, mods::CompositeMod, A, val, I...) =
     mod_setindex!_composite(ModStyle(mod, IF_setindex!()), mod, mods, A, val, I...)
 
-mod_setindex!_composite(::ModNothing, mod, mods, A, val, I...) =
+@propagate_inbounds mod_setindex!_composite(::ModNothing, mod, mods, A, val, I...) =
     mod_setindex!_composite(first(mods), tail(mods), A, val, I...)
-mod_setindex!_composite(::ModFinal, mod, mods, A, val, I...) =
+@propagate_inbounds mod_setindex!_composite(::ModFinal, mod, mods, A, val, I...) =
     mod_setindex!_final(mod, val, I...)
-function mod_setindex!_composite(::ModRecursive, mod, mods, A, val, I...)
+@propagate_inbounds function mod_setindex!_composite(::ModRecursive, mod, mods, A, val, I...)
     J = mod_setindex!_pre(mod, val, I...)
-    mod_setindex!_composite(first(mods), tail(mods), A, val, J...)
+    @inbounds mod_setindex!_composite(first(mods), tail(mods), A, J...)
 end
 
 mod_axes(::CompositeStyle, mod::CompositeMod, A) =
