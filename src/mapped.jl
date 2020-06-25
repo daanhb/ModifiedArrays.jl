@@ -11,7 +11,6 @@ end
 
 ModStyle(::AbstractMapMod, ::Interface) = ModNothing()
 ModStyle(::Type{<:AbstractMapMod}, ::IF_IndexStyle) = ModNothing()
-ModStyle(::AbstractMapMod, ::IF_similar) = ModNothing()
 
 ModStyle(::AbstractMapMod, ::IF_eltype) = ModRecursive()
 mod_eltype_post(mod::AbstractMapMod, T) = Base.promote_op(mod.f,T)
